@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>Patent Search (Part 1)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        font-family: system-ui, Arial;
+        max-width: 900px;
+        margin: 24px auto;
+        padding: 0 16px;
+      }
+      h1 {
+        margin: 0 0 16px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      input,
+      select,
+      button {
+        padding: 8px 10px;
+        font-size: 14px;
+      }
+      #query {
+        flex: 1 1 520px;
+      }
+      .card {
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        padding: 12px 14px;
+        margin: 10px 0;
+      }
+      .meta {
+        color: #666;
+        font-size: 13px;
+        margin-top: 4px;
+      }
+      .score {
+        font-weight: 600;
+      }
+      .muted {
+        color: #888;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Patent Paragraph Search</h1>
+
+    <div class="row">
+      <input
+        id="query"
+        placeholder="Enter a query, such as: wheel speed sensor for vehicle"
+      />
+    </div>
+    <div class="row">
+      <label
+        >TopK
+        <input
+          id="topk"
+          type="number"
+          min="1"
+          max="50"
+          value="5"
+          style="width: 70px"
+      /></label>
+      <label
+        >Section
+        <select id="section">
+          <option value="both">both</option>
+          <option value="claim">claim</option>
+          <option value="desc">desc</option>
+        </select>
+      </label>
+      <input
+        id="cpc"
+        placeholder="CPC prefix (optional, e.g., B60B)"
+        style="width: 160px"
+      />
+      <button id="btn">Search</button>
+    </div>
+
+    <div id="results"></div>
+
+    <script>
+      const API = "http://127.0.0.1:8000/search"; // local API
+
+      async function doSearch() {
+        const query = document.getElementById("query").value.trim();
+        const topk = parseInt(document.getElementById("topk").value || "5", 10);
+        const section = document.getElementById("section").value;
+        const cpc = document.getElementById("cpc").value.trim();
+        if (!query) {
+          alert("Please enter your query first.");
+          return;
+        }
+
+        document.getElementById("btn").disabled = true;
+        document.getElementById("btn").innerText = "Searching...";
+
+        try {
+          const res = await fetch(API, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query,
+              topk,
+              section,
+              cpc_prefix: cpc || null,
+            }),
+          });
+          const data = await res.json();
+          render(data);
+        } catch (e) {
+          alert("Request failed：" + e);
+        } finally {
+          document.getElementById("btn").disabled = false;
+          document.getElementById("btn").innerText = "Search";
+        }
+      }
+
+      function render(items) {
+        const box = document.getElementById("results");
+        if (!Array.isArray(items) || items.length === 0) {
+          box.innerHTML =
+            "No results found (try a different query or remove the CPC prefix).</p>";
+          return;
+        }
+        box.innerHTML = items
+          .map(
+            (it) => `
+        <div class="card">
+          <div><span class="score">#${it.rank} • ${it.score.toFixed(4)}</span>
+            • [${it.section}] ${escapeHtml(it.title)}</div>
+          <div class="meta">#${it.doc_number} • cpc=${escapeHtml(
+              it.classification
+            )} • idx=${it.idx}</div>
+          <div>${escapeHtml(it.snippet)}...</div>
+        </div>
+      `
+          )
+          .join("");
+      }
+
+      function escapeHtml(s) {
+        return (s || "").replace(
+          /[&<>"']/g,
+          (m) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            }[m])
+        );
+      }
+
+      document.getElementById("btn").addEventListener("click", doSearch);
+      document.getElementById("query").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") doSearch();
+      });
+    </script>
+  </body>
+</html>
