@@ -15,7 +15,6 @@ app = FastAPI(title="Patent Paragraph Search (Part 1)")
 
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="Patent Paragraph Search (Part 1)")
 
 # 仅开发环境：放开跨域，方便本地网页调用
 app.add_middleware(
@@ -32,6 +31,9 @@ class SearchRequest(BaseModel):
     topk: int = Field(5, ge=1, le=50, description="返回条数（1-50）")
     section: Literal["both","claim","desc"] = Field("both", description="检索范围")
     cpc_prefix: Optional[str] = Field(None, description="可选：CPC 分类前缀过滤，如 B60B")
+    use_hybrid: bool = Field(False, description="是否启用 BM25+向量融合")
+    bm25_weight: float = Field(0.5, ge=0.0, le=1.0, description="融合权重，越大越偏向关键词")
+
 
 class SearchResult(BaseModel):
     rank: int
@@ -42,19 +44,32 @@ class SearchResult(BaseModel):
     classification: str
     idx: int
     snippet: str
+    text_full: Optional[str] = None   # 👈 新增
+
 
 @app.post("/search", response_model=list[SearchResult])
 def search(req: SearchRequest):
-    results = SEARCHER.search(
-        query=req.query,
-        topk=req.topk,
-        section=req.section,
-        cpc_prefix=req.cpc_prefix
-    )
-    # 加上 rank 字段
+    # 1) 根据开关选择基础向量 or 混合检索
+    if req.use_hybrid:
+        raw = SEARCHER.search_hybrid(
+            query=req.query,
+            topk=req.topk,
+            bm25_weight=req.bm25_weight,
+            section=req.section,
+            cpc_prefix=req.cpc_prefix
+        )
+    else:
+        raw = SEARCHER.search(
+            query=req.query,
+            topk=req.topk,
+            section=req.section,
+            cpc_prefix=req.cpc_prefix
+        )
+
+    # 2) 统一加上 rank，并按你原来的响应模型返回
     return [
         SearchResult(rank=i+1, **r).dict()
-        for i, r in enumerate(results)
+        for i, r in enumerate(raw)
     ]
 
 @app.get("/")

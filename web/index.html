@@ -76,11 +76,26 @@
           <option value="desc">desc</option>
         </select>
       </label>
+      <label
+        ><input id="use_hybrid" type="checkbox" /> Use Hybrid (BM25 +
+        Vector)</label
+      >
       <input
-        id="cpc"
-        placeholder="CPC prefix (optional, e.g., B60B)"
+        id="bm25_weight"
+        type="number"
+        min="0"
+        max="1"
+        step="0.1"
+        value="0.5"
+        placeholder="bm25_weight (0~1)"
+      />
+      <input
+        id="cpc_prefix"
+        type="text"
+        placeholder="CPC prefix e.g. B60B"
         style="width: 160px"
       />
+
       <button id="btn">Search</button>
     </div>
 
@@ -93,7 +108,13 @@
         const query = document.getElementById("query").value.trim();
         const topk = parseInt(document.getElementById("topk").value || "5", 10);
         const section = document.getElementById("section").value;
-        const cpc = document.getElementById("cpc").value.trim();
+        const useHybrid = document.getElementById("use_hybrid").checked;
+        const bm25Weight = Number(
+          document.getElementById("bm25_weight").value || 0.5
+        );
+        const cpcPrefix =
+          document.getElementById("cpc_prefix").value.trim() || null;
+
         if (!query) {
           alert("Please enter your query first.");
           return;
@@ -110,40 +131,99 @@
               query,
               topk,
               section,
-              cpc_prefix: cpc || null,
+              cpc_prefix: cpcPrefix, // ✅ 传 CPC 前缀
+              use_hybrid: useHybrid, // ✅ 开关
+              bm25_weight: bm25Weight,
             }),
           });
           const data = await res.json();
-          render(data);
+          render(data, { useHybrid, bm25Weight, cpcPrefix });
         } catch (e) {
-          alert("Request failed：" + e);
+          alert("Request failed:" + e);
         } finally {
           document.getElementById("btn").disabled = false;
           document.getElementById("btn").innerText = "Search";
         }
       }
 
-      function render(items) {
+      function render(items, ctx = {}) {
         const box = document.getElementById("results");
+        const { useHybrid, bm25Weight, cpcPrefix } = ctx;
+
+        const modeLine = `
+            <div class="muted" style="margin:8px 0">
+              Mode: <b>${useHybrid ? "Hybrid (BM25+Vector)" : "Vector Only"}</b>
+              ${useHybrid ? ` • bm25_weight=${bm25Weight}` : ""}
+              ${cpcPrefix ? ` • CPC=${escapeHtml(cpcPrefix)}` : ""}
+            </div>
+          `;
+
         if (!Array.isArray(items) || items.length === 0) {
           box.innerHTML =
-            "No results found (try a different query or remove the CPC prefix).</p>";
+            modeLine +
+            `<p>No results found (try a different query or remove the CPC prefix).</p>`;
           return;
         }
-        box.innerHTML = items
-          .map(
-            (it) => `
-        <div class="card">
-          <div><span class="score">#${it.rank} • ${it.score.toFixed(4)}</span>
-            • [${it.section}] ${escapeHtml(it.title)}</div>
-          <div class="meta">#${it.doc_number} • cpc=${escapeHtml(
+
+        const cards = items
+          .map((it, i) => {
+            const full = it.text_full || it.snippet || "";
+            const short = full.slice(0, 220);
+            const needToggle = full.length > short.length;
+
+            return `
+              <div class="card" data-i="${i}">
+                <div><span class="score">#${it.rank} • ${Number(
+              it.score
+            ).toFixed(4)}</span>
+                  • [${it.section}] ${escapeHtml(it.title)}</div>
+                <div class="meta">#${it.doc_number} • cpc=${escapeHtml(
               it.classification
             )} • idx=${it.idx}</div>
-          <div>${escapeHtml(it.snippet)}...</div>
-        </div>
-      `
-          )
+
+                <div class="snippet" data-state="short">
+                  <span class="short">${escapeHtml(short)}${
+              needToggle ? "..." : ""
+            }</span>
+                  <span class="full" style="display:none">${escapeHtml(
+                    full
+                  )}</span>
+                </div>
+
+                ${
+                  needToggle
+                    ? `<button class="toggle" data-i="${i}" style="margin-top:6px">Show more</button>`
+                    : ""
+                }
+              </div>`;
+          })
           .join("");
+
+        box.innerHTML = modeLine + cards;
+
+        // 事件委托：点击 Show more / Show less
+        box.onclick = (e) => {
+          const btn = e.target.closest("button.toggle");
+          if (!btn) return;
+          const i = btn.getAttribute("data-i");
+          const card = box.querySelector(`.card[data-i="${i}"]`);
+          const snip = card.querySelector(".snippet");
+          const shortEl = snip.querySelector(".short");
+          const fullEl = snip.querySelector(".full");
+          const state = snip.getAttribute("data-state");
+
+          if (state === "short") {
+            shortEl.style.display = "none";
+            fullEl.style.display = "inline";
+            snip.setAttribute("data-state", "full");
+            btn.textContent = "Show less";
+          } else {
+            shortEl.style.display = "inline";
+            fullEl.style.display = "none";
+            snip.setAttribute("data-state", "short");
+            btn.textContent = "Show more";
+          }
+        };
       }
 
       function escapeHtml(s) {
